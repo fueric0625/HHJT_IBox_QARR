@@ -12,6 +12,9 @@ DATA_DIR = ROOT / "data"
 CLAUSES_PATH = DATA_DIR / "clauses.jsonl"
 CATALOG_PATH = DATA_DIR / "catalog.json"
 TESTCASES_PATH = DATA_DIR / "testcases.json"
+DOCS_META_PATH = DATA_DIR / "docs_meta.json"
+UPLOADS_DIR = DATA_DIR / "uploads"
+EXTRACTED_DIR = DATA_DIR / "extracted"
 
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://172.16.120.211:31210/v1")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "dummy")

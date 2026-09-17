@@ -9,7 +9,7 @@ from openai import OpenAI
 import httpx
 
 from .config import KEEP_FULL_CLAUSES, LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, MAX_ROUNDS, MAX_TOOL_CALLS
-from .prompts import SYSTEM_PROMPT
+from .prompts import system_prompt
 from .tools import CURRENT_QUERY, OPENAI_TOOLS, TOOL_IMPL, lookup_nav_hits, root_catalog_brief
 
 
@@ -168,11 +168,12 @@ def ask(question: str, history: list[dict] | None = None) -> dict[str, Any]:
     return {"answer": "".join(tokens), "trace": trace, "citations": citations}
 
 
-def _complete(client: OpenAI, messages: list[dict], use_tools: bool):
+def _complete_stream(client: OpenAI, messages: list[dict], use_tools: bool):
     kwargs: dict[str, Any] = {
         "model": LLM_MODEL,
         "messages": messages,
         "temperature": 0.1,
+        "stream": True,
         "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
     }
     if use_tools:
@@ -201,7 +202,7 @@ def ask_stream(question: str, history: list[dict] | None = None) -> Iterator[dic
         return int((time.perf_counter() - started) * 1000)
 
     try:
-        messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        messages: list[dict] = [{"role": "system", "content": system_prompt()}]
         if history:
             messages.extend(history)
         user_content = question
@@ -226,32 +227,97 @@ def ask_stream(question: str, history: list[dict] | None = None) -> Iterator[dic
                     }
                 )
             ctx = _trim_messages(messages)
+            yield {
+                "event": "round_start",
+                "data": {
+                    "round": rounds,
+                    "force_answer": force_answer,
+                    "elapsed_ms": elapsed_ms(),
+                },
+            }
+            answer_started = False
+            if force_answer:
+                answer_started = True
+                yield {
+                    "event": "answer_start",
+                    "data": {"round": rounds, "elapsed_ms": elapsed_ms()},
+                }
+
             try:
-                resp = _complete(client, ctx, use_tools=not force_answer)
+                stream = _complete_stream(client, ctx, use_tools=not force_answer)
             except Exception as e:
                 yield {"event": "error", "data": {"message": str(e), "elapsed_ms": elapsed_ms()}}
                 return
-            msg = resp.choices[0].message
-            raw_calls = list(msg.tool_calls or [])
+
+            tool_acc: dict[int, dict] = {}
+            content_parts: list[str] = []
+            pending: list[str] = []
+            mode: str | None = None
+            try:
+                for chunk in stream:
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    tcs = getattr(delta, "tool_calls", None) or []
+                    if tcs:
+                        mode = "tools"
+                        pending.clear()
+                        for tc in tcs:
+                            idx = tc.index if getattr(tc, "index", None) is not None else 0
+                            slot = tool_acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                            if tc.id:
+                                slot["id"] = tc.id
+                            fn = getattr(tc, "function", None)
+                            if fn:
+                                if fn.name:
+                                    slot["name"] += fn.name
+                                if fn.arguments:
+                                    slot["arguments"] += fn.arguments
+                    text = delta.content or ""
+                    if not text:
+                        continue
+                    if mode == "tools":
+                        continue
+                    if mode is None:
+                        if not text.strip():
+                            pending.append(text)
+                            continue
+                        mode = "content"
+                    if not answer_started:
+                        answer_started = True
+                        yield {
+                            "event": "answer_start",
+                            "data": {"round": rounds, "elapsed_ms": elapsed_ms()},
+                        }
+                    for piece in (*pending, text):
+                        content_parts.append(piece)
+                        yield {"event": "token", "data": {"text": piece, "round": rounds}}
+                    pending.clear()
+            except Exception as e:
+                yield {"event": "error", "data": {"message": str(e), "elapsed_ms": elapsed_ms()}}
+                return
+
+            raw_calls = [tool_acc[i] for i in sorted(tool_acc)] if tool_acc else []
             if raw_calls and not force_answer:
                 tool_calls_msg = []
                 fake = []
                 for i, tc in enumerate(raw_calls):
-                    args_obj = _parse_args(tc.function.arguments)
+                    args_obj = _parse_args(tc.get("arguments"))
                     args_s = json.dumps(args_obj, ensure_ascii=False)
-                    cid = tc.id or f"call_{i}"
-                    fake.append({"id": cid, "name": tc.function.name, "arguments": args_s})
+                    cid = tc.get("id") or f"call_{i}"
+                    name = tc.get("name") or ""
+                    fake.append({"id": cid, "name": name, "arguments": args_s})
                     tool_calls_msg.append(
                         {
                             "id": cid,
                             "type": "function",
-                            "function": {"name": tc.function.name, "arguments": args_s},
+                            "function": {"name": name, "arguments": args_s},
                         }
                     )
                     yield {
                         "event": "tool_call",
                         "data": {
-                            "name": tc.function.name,
+                            "name": name,
                             "arguments": args_obj,
                             "round": rounds,
                             "elapsed_ms": elapsed_ms(),
@@ -283,9 +349,12 @@ def ask_stream(question: str, history: list[dict] | None = None) -> Iterator[dic
                     force_answer = True
                 continue
 
-            answer = msg.content or ""
-            for i in range(0, len(answer), 24):
-                yield {"event": "token", "data": {"text": answer[i : i + 24]}}
+            answer = "".join(content_parts)
+            if not answer_started:
+                yield {
+                    "event": "answer_start",
+                    "data": {"round": rounds, "elapsed_ms": elapsed_ms()},
+                }
             yield {
                 "event": "done",
                 "data": {
@@ -297,4 +366,8 @@ def ask_stream(question: str, history: list[dict] | None = None) -> Iterator[dic
             }
             return
     finally:
-        CURRENT_QUERY.reset(q_token)
+        # StreamingResponse may iterate this generator in a copied context.
+        try:
+            CURRENT_QUERY.reset(q_token)
+        except (LookupError, ValueError):
+            pass

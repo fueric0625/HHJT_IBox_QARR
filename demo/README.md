@@ -2,7 +2,7 @@
 
 用**分级目录 + 工具调用 + 渐进式披露**回答出差相关制度问题。本阶段没有向量库、没有 BM25。前后端用 **SSE**，不用 WebSocket。
 
-第一轮冻结见 [方案0-5步成果说明_v1.md](方案0-5步成果说明_v1.md)。第二轮（准确率/速度）见 [方案0-5步成果说明_v2.md](方案0-5步成果说明_v2.md)。
+第一轮冻结见 [方案0-5步成果说明_v1.md](方案0-5步成果说明_v1.md)。第二轮（准确率/速度）见 [方案0-5步成果说明_v2.md](方案0-5步成果说明_v2.md)。第三轮（真流式 + 添加 PDF）见 [方案0-5步成果说明_v3.md](方案0-5步成果说明_v3.md)。
 
 ## 知识库
 
@@ -36,9 +36,11 @@ copy .env.example .env
 python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000
 ```
 
-浏览器打开 `http://127.0.0.1:8000`。聊天走 `POST /api/chat`（`text/event-stream`）：`token` / `tool_call` / `tool_result` / `done` / `error`。
+浏览器打开 `http://127.0.0.1:8000`。聊天走 `POST /api/chat`（`text/event-stream`）：`round_start` / `tool_call` / `tool_result` / `answer_start` / `token` / `done` / `error`。最终作答轮一旦开始即推 `answer_start`，随后 `token` 为模型真增量（不再按 24 字切块）。
 
-方案第 0–5 步第一轮成果见 [方案0-5步成果说明_v1.md](方案0-5步成果说明_v1.md)，第二轮见 [方案0-5步成果说明_v2.md](方案0-5步成果说明_v2.md)。
+侧栏可 **添加 PDF**：`POST /api/ingest`（multipart，SSE：`progress` / `done` / `error`）。抽取拆条后写回 `clauses.jsonl` / `catalog.json` 并热加载，不必重启 uvicorn。文件列表见 `GET /api/files`。
+
+方案第 0–5 步第一轮成果见 [方案0-5步成果说明_v1.md](方案0-5步成果说明_v1.md)，第二轮见 [方案0-5步成果说明_v2.md](方案0-5步成果说明_v2.md)，第三轮见 [方案0-5步成果说明_v3.md](方案0-5步成果说明_v3.md)。
 
 ## 评测
 

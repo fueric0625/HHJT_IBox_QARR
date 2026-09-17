@@ -22,6 +22,11 @@ def load_catalog() -> dict[str, Any]:
     return json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
 
 
+def reload_kb() -> None:
+    load_clauses.cache_clear()
+    load_catalog.cache_clear()
+
+
 def find_node(node_id: str | None) -> dict | None:
     catalog = load_catalog()
     if not node_id:

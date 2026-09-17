@@ -18,6 +18,15 @@ aside h2 { font-size: 13px; margin: 24px 0 8px; color: var(--muted); font-weight
 #samples { list-style: none; padding: 0; margin: 0; }
 #samples li { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; cursor: pointer; font-size: 13px; }
 #samples li:hover { border-color: var(--accent); }
+#file-list { list-style: none; padding: 0; margin: 0 0 10px; }
+.file-item { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; font-size: 12px; line-height: 1.45; color: var(--text); }
+.file-item .sub { color: var(--muted); }
+.upload-btn { display: inline-flex; align-items: center; justify-content: center; background: transparent; color: var(--accent); border: 1px dashed var(--accent); border-radius: 8px; padding: 8px 12px; cursor: pointer; font-size: 13px; font-weight: 600; width: 100%; }
+.upload-btn input { display: none; }
+.upload-btn:hover { background: #1b2836; }
+#ingest-status { margin: 8px 0 0; min-height: 1.4em; }
+.answer-heading { color: var(--ok); font-weight: 700; margin: 4px 0 6px; }
+.answer-body { white-space: pre-wrap; }
 main { display: flex; flex-direction: column; min-width: 0; }
 header { display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--line); }
 #status { font-size: 12px; color: var(--muted); }

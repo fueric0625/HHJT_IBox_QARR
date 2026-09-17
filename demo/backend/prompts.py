@@ -11,7 +11,8 @@ D. 可以且应当一次并行调用多个工具。引用数字、金额、天�
 2. 只能依据 read_clause 返回的原文作答。目录摘要、关键词、检索预览、see_also 都不是原文。
 3. 凡涉及金额、天数、时点、职级差标、流程步骤、能否报销，必须先 read_clause 读到完整条款再写进答案。
 4. 条款含表格（住宿标准、城市划分、津贴时段）时，必须读取该条全文（及对应附件），禁止凭记忆填数字。
-5. 本知识库只有 8 份文件（多为 2022 年文号）。不要引用库中不存在的文件，例如《付款管理规定》或 2025 年出差规定。
+5. 本知识库当前文件如下，不要引用清单之外的制度（例如未入库的《付款管理规定》或已废止文号）：
+{FILE_INVENTORY}
 6. 已读原文与问题关键词对不上时，禁止用当前条硬答，必须 lookup_keyword 或换章再读。审批角色的例行职责（例如预算员检查是否符合预算）不是用户所问异常情形的处理办法，禁止把职责表改写成操作流程。只有原文明确写了该情形如何处理才能作答；否则【直接回答】第一句必须是：“未在制度库中找到明确规定，建议咨询综合部”。禁止编造条款或补办时限。
 7. 不要把其他文件里的“紧急补办”套用到未规定的场景；也不要把“报销时须把出差申请作为附加流程”解释成可以先出差后补办审批。
 8. 读到的原文或工具返回的 see_also 中若出现“参见 / 依照 / 最高上限 / 不得报销”或同章例外条，必须再并行 read_clause 那些条款。交叉引用跨文件时同样处理。
@@ -24,3 +25,23 @@ D. 可以且应当一次并行调用多个工具。引用数字、金额、天�
 【操作建议】
 【未解决】
 """
+
+
+def _file_inventory() -> str:
+    try:
+        from .store import load_catalog
+
+        cat = load_catalog()
+        lines: list[str] = []
+        for n in cat.get("nodes") or []:
+            title = n.get("title") or n.get("id")
+            doc_no = n.get("doc_no") or ""
+            lines.append(f"- {n.get('id')} {title} {doc_no}".strip())
+        return "\n".join(lines) if lines else "- （目录为空）"
+    except Exception:
+        return "- （目录未加载）"
+
+
+def system_prompt() -> str:
+    return SYSTEM_PROMPT.replace("{FILE_INVENTORY}", _file_inventory())
+
