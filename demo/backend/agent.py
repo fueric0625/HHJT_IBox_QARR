@@ -1,0 +1,256 @@
+from __future__ import annotations
+
+import json
+from collections.abc import Iterator
+from typing import Any
+
+from openai import OpenAI
+import httpx
+
+from .config import KEEP_FULL_CLAUSES, LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, MAX_ROUNDS, MAX_TOOL_CALLS
+from .prompts import SYSTEM_PROMPT
+from .tools import OPENAI_TOOLS, TOOL_IMPL
+
+
+def _client() -> OpenAI:
+    http_client = httpx.Client(trust_env=False, timeout=120.0)
+    return OpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY, http_client=http_client)
+
+
+def _parse_args(raw: str | dict | None) -> dict:
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    raw = str(raw).strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError:
+        if not raw.startswith("{"):
+            raw = "{" + raw
+        if not raw.endswith("}"):
+            raw = raw + "}"
+        try:
+            data = json.loads(raw)
+            return data if isinstance(data, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+
+
+def _tool_summary(name: str, arguments: dict, result: str) -> str:
+    try:
+        data = json.loads(result)
+    except json.JSONDecodeError:
+        data = {}
+    if name == "read_clause":
+        return data.get("breadcrumb") or arguments.get("clause_id") or name
+    if name in {"list_catalog", "list_section"}:
+        kids = data.get("children") or data.get("items") or []
+        titles = [c.get("title") for c in kids[:6] if c.get("title")]
+        return f"{name} -> " + "、".join(titles)
+    if name == "lookup_keyword":
+        hits = data.get("hits") or []
+        return f"keyword hits: {len(hits)}"
+    return name
+
+
+def _trim_messages(messages: list[dict]) -> list[dict]:
+    """Each model call can use a different context window.
+
+    Keep system + original user question. Collapse old list_* results.
+    Keep only the latest KEEP_FULL_CLAUSES read_clause full texts.
+    """
+    if len(messages) <= 2:
+        return messages
+    system, user, *rest = messages
+    read_indexes = [
+        i
+        for i, m in enumerate(rest)
+        if m.get("role") == "tool" and m.get("name") == "read_clause"
+    ]
+    keep_reads = set(read_indexes[-KEEP_FULL_CLAUSES:])
+    trimmed: list[dict] = [system, user]
+    for i, m in enumerate(rest):
+        if m.get("role") != "tool":
+            trimmed.append(m)
+            continue
+        name = m.get("name")
+        content = m.get("content") or ""
+        if name in {"list_catalog", "list_section", "lookup_keyword"}:
+            try:
+                data = json.loads(content)
+                slim = {
+                    "trimmed": True,
+                    "name": name,
+                    "current": (data.get("current") or {}).get("title") or (data.get("current") or {}).get("id"),
+                    "ids": [
+                        (c.get("id"), c.get("title"))
+                        for c in (data.get("children") or data.get("items") or data.get("hits") or [])
+                    ],
+                }
+                content = json.dumps(slim, ensure_ascii=False)
+            except json.JSONDecodeError:
+                content = content[:400]
+        elif name == "read_clause" and i not in keep_reads:
+            try:
+                data = json.loads(content)
+                content = json.dumps(
+                    {
+                        "trimmed": True,
+                        "id": data.get("id"),
+                        "breadcrumb": data.get("breadcrumb"),
+                        "note": "原文已读过，需要细节请再次 read_clause",
+                    },
+                    ensure_ascii=False,
+                )
+            except json.JSONDecodeError:
+                content = content[:200]
+        trimmed.append({**m, "content": content})
+    return trimmed
+
+
+def _run_tools(tool_calls: list[dict]) -> list[dict]:
+    events = []
+    for tc in tool_calls:
+        name = tc["name"]
+        args = _parse_args(tc.get("arguments"))
+        impl = TOOL_IMPL.get(name)
+        if not impl:
+            result = json.dumps({"error": f"未知工具 {name}"}, ensure_ascii=False)
+        else:
+            try:
+                result = impl(**args)
+            except Exception as e:
+                result = json.dumps({"error": str(e)}, ensure_ascii=False)
+        events.append(
+            {
+                "id": tc["id"],
+                "name": name,
+                "arguments": args,
+                "result": result,
+                "summary": _tool_summary(name, args, result),
+            }
+        )
+    return events
+
+
+def ask(question: str, history: list[dict] | None = None) -> dict[str, Any]:
+    """Non-streaming path for eval."""
+    tokens: list[str] = []
+    trace: list[dict] = []
+    citations: list[str] = []
+    for event in ask_stream(question, history=history):
+        et = event["event"]
+        data = event["data"]
+        if et == "token":
+            tokens.append(data.get("text", ""))
+        elif et == "tool_call":
+            trace.append({"type": "call", **data})
+        elif et == "tool_result":
+            trace.append({"type": "result", **data})
+            if data.get("name") == "read_clause":
+                citations.append(data.get("summary") or "")
+        elif et == "error":
+            return {"answer": "", "error": data.get("message"), "trace": trace, "citations": citations}
+        elif et == "done":
+            return {
+                "answer": data.get("answer") or "".join(tokens),
+                "trace": trace,
+                "citations": [c for c in citations if c],
+                "rounds": data.get("rounds"),
+                "tool_calls": data.get("tool_calls"),
+            }
+    return {"answer": "".join(tokens), "trace": trace, "citations": citations}
+
+
+def _complete(client: OpenAI, messages: list[dict], use_tools: bool):
+    kwargs: dict[str, Any] = {
+        "model": LLM_MODEL,
+        "messages": messages,
+        "temperature": 0.1,
+    }
+    if use_tools:
+        kwargs["tools"] = OPENAI_TOOLS
+        kwargs["tool_choice"] = "auto"
+    return client.chat.completions.create(**kwargs)
+
+
+def ask_stream(question: str, history: list[dict] | None = None) -> Iterator[dict]:
+    client = _client()
+    messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    if history:
+        messages.extend(history)
+    messages.append({"role": "user", "content": question})
+
+    rounds = 0
+    tool_count = 0
+    force_answer = False
+
+    while True:
+        rounds += 1
+        if force_answer:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": "已达到工具调用上限。请仅根据已经 read_clause 的原文作答；若证据不足，回答未找到并建议咨询综合部。不要再调用工具。",
+                }
+            )
+        ctx = _trim_messages(messages)
+        try:
+            resp = _complete(client, ctx, use_tools=not force_answer)
+        except Exception as e:
+            yield {"event": "error", "data": {"message": str(e)}}
+            return
+        msg = resp.choices[0].message
+        raw_calls = list(msg.tool_calls or [])
+        if raw_calls and not force_answer:
+            tool_calls_msg = []
+            fake = []
+            for i, tc in enumerate(raw_calls):
+                args_obj = _parse_args(tc.function.arguments)
+                args_s = json.dumps(args_obj, ensure_ascii=False)
+                cid = tc.id or f"call_{i}"
+                fake.append({"id": cid, "name": tc.function.name, "arguments": args_s})
+                tool_calls_msg.append(
+                    {
+                        "id": cid,
+                        "type": "function",
+                        "function": {"name": tc.function.name, "arguments": args_s},
+                    }
+                )
+                yield {"event": "tool_call", "data": {"name": tc.function.name, "arguments": args_obj}}
+            executed = _run_tools(fake)
+            messages.append({"role": "assistant", "content": "", "tool_calls": tool_calls_msg})
+            for item in executed:
+                tool_count += 1
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": item["id"],
+                        "name": item["name"],
+                        "content": item["result"],
+                    }
+                )
+                yield {
+                    "event": "tool_result",
+                    "data": {
+                        "name": item["name"],
+                        "summary": item["summary"],
+                        "arguments": item["arguments"],
+                    },
+                }
+            if rounds >= MAX_ROUNDS or tool_count >= MAX_TOOL_CALLS:
+                force_answer = True
+            continue
+
+        answer = msg.content or ""
+        for i in range(0, len(answer), 24):
+            yield {"event": "token", "data": {"text": answer[i : i + 24]}}
+        yield {
+            "event": "done",
+            "data": {"answer": answer, "rounds": rounds, "tool_calls": tool_count},
+        }
+        return

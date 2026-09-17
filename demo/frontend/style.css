@@ -1,0 +1,37 @@
+:root {
+  --bg: #0f1419;
+  --panel: #171e27;
+  --line: #2a3542;
+  --text: #e8eef4;
+  --muted: #93a0ae;
+  --accent: #3d9cf0;
+  --tool: #c9a227;
+  --ok: #3cb371;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--text); }
+body { display: grid; grid-template-columns: 280px 1fr; }
+aside { border-right: 1px solid var(--line); padding: 20px; overflow: auto; background: var(--panel); }
+.brand h1 { font-size: 18px; margin: 0 0 6px; }
+.brand p, .hint, .meta { color: var(--muted); font-size: 12px; line-height: 1.5; }
+aside h2 { font-size: 13px; margin: 24px 0 8px; color: var(--muted); font-weight: 600; }
+#samples { list-style: none; padding: 0; margin: 0; }
+#samples li { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; cursor: pointer; font-size: 13px; }
+#samples li:hover { border-color: var(--accent); }
+main { display: flex; flex-direction: column; min-width: 0; }
+header { display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+#status { font-size: 12px; color: var(--muted); }
+#log { flex: 1; overflow: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+.msg { max-width: 860px; padding: 12px 14px; border-radius: 10px; white-space: pre-wrap; line-height: 1.65; font-size: 14px; }
+.msg.user { align-self: flex-end; background: #243044; }
+.msg.bot { background: #1b242e; border: 1px solid var(--line); }
+.tools { font-size: 12px; color: var(--tool); margin-bottom: 8px; }
+.tools div { margin: 2px 0; }
+form { display: flex; gap: 8px; padding: 12px 20px 18px; border-top: 1px solid var(--line); }
+textarea { flex: 1; resize: none; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font: inherit; }
+button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 0 18px; cursor: pointer; font-weight: 600; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+@media (max-width: 800px) {
+  body { grid-template-columns: 1fr; }
+  aside { display: none; }
+}

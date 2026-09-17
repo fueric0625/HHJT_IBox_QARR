@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>出差制度智能体 DEMO</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <aside>
+    <div class="brand">
+      <h1>规章制度助手</h1>
+      <p>分级目录 · 工具召回 · SSE</p>
+    </div>
+    <div class="meta" id="health">加载知识库…</div>
+    <h2>示例问题</h2>
+    <ul id="samples"></ul>
+    <p class="hint">DEMO 知识库为 2022 年 8 份出差相关制度，不是一次性向量检索。</p>
+  </aside>
+  <main>
+    <header>
+      <strong>对话</strong>
+      <span id="status">空闲</span>
+    </header>
+    <section id="log"></section>
+    <form id="form">
+      <textarea id="q" rows="2" placeholder="例如：出差津贴怎么算？紧急出差来不及审批怎么办？"></textarea>
+      <button type="submit" id="send">发送</button>
+    </form>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
