@@ -43,6 +43,10 @@ function addMsg(role, text) {
   return div;
 }
 
+function fmtSec(ms) {
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
   const question = qEl.value.trim();
@@ -52,10 +56,21 @@ form.addEventListener("submit", async (e) => {
   const bot = addMsg("bot", "");
   const tools = document.createElement("div");
   tools.className = "tools";
+  const meta = document.createElement("div");
+  meta.className = "tools-meta";
+  meta.textContent = "第 0 轮 · 0.0s";
+  tools.appendChild(meta);
   bot.appendChild(tools);
   const body = document.createElement("div");
   bot.appendChild(body);
   sendBtn.disabled = true;
+  const t0 = performance.now();
+  let lastRound = 0;
+  const setStatus = (text) => {
+    const elapsed = fmtSec(performance.now() - t0);
+    statusEl.textContent = `${text} · ${elapsed}`;
+    meta.textContent = `第 ${lastRound} 轮 · ${elapsed}`;
+  };
   statusEl.textContent = "检索中…";
   try {
     const res = await fetch("/api/chat", {
@@ -82,21 +97,26 @@ form.addEventListener("submit", async (e) => {
         }
         if (!dataLine) continue;
         const data = JSON.parse(dataLine);
+        const elapsedLabel = data.elapsed_ms != null ? fmtSec(data.elapsed_ms) : fmtSec(performance.now() - t0);
+        if (data.round) lastRound = data.round;
         if (eventName === "token") {
           body.textContent += data.text || "";
         } else if (eventName === "tool_call") {
           const row = document.createElement("div");
-          row.textContent = `调用 ${data.name} ${JSON.stringify(data.arguments || {})}`;
+          row.textContent = `第${data.round || lastRound}轮 ${elapsedLabel} 调用 ${data.name} ${JSON.stringify(data.arguments || {})}`;
           tools.appendChild(row);
-          statusEl.textContent = `工具 ${data.name}`;
+          setStatus(`第${data.round || lastRound}轮 · ${data.name}`);
         } else if (eventName === "tool_result") {
           const row = document.createElement("div");
-          row.textContent = `返回 ${data.summary || data.name}`;
+          row.textContent = `第${data.round || lastRound}轮 ${elapsedLabel} 返回 ${data.summary || data.name}`;
           tools.appendChild(row);
         } else if (eventName === "error") {
           body.textContent += `\n[错误] ${data.message || ""}`;
         } else if (eventName === "done") {
-          statusEl.textContent = `完成 · ${data.tool_calls || 0} 次工具`;
+          lastRound = data.rounds || lastRound;
+          const spent = data.elapsed_ms != null ? fmtSec(data.elapsed_ms) : fmtSec(performance.now() - t0);
+          statusEl.textContent = `完成 · ${data.rounds || 0}轮 · ${data.tool_calls || 0}次工具 · ${spent}`;
+          meta.textContent = `共 ${data.rounds || 0} 轮 · ${data.tool_calls || 0} 次工具 · ${spent}`;
         }
         logEl.scrollTop = logEl.scrollHeight;
       }
@@ -105,6 +125,6 @@ form.addEventListener("submit", async (e) => {
     body.textContent += `\n[网络错误] ${err.message}`;
   } finally {
     sendBtn.disabled = false;
-    if (statusEl.textContent === "检索中…") statusEl.textContent = "空闲";
+    if (statusEl.textContent.startsWith("检索中")) statusEl.textContent = "空闲";
   }
 });

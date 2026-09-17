@@ -18,4 +18,4 @@ LLM_API_KEY = os.getenv("LLM_API_KEY", "dummy")
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen")
 MAX_ROUNDS = int(os.getenv("MAX_ROUNDS", "6"))
 MAX_TOOL_CALLS = int(os.getenv("MAX_TOOL_CALLS", "10"))
-KEEP_FULL_CLAUSES = 2
+KEEP_FULL_CLAUSES = int(os.getenv("KEEP_FULL_CLAUSES", "4"))

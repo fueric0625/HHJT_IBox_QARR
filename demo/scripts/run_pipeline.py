@@ -17,6 +17,6 @@ def run(script: str, extra: list[str] | None = None) -> None:
 if __name__ == "__main__":
     run("extract_pdfs.py")
     run("export_testcases.py")
-    run("build_catalog.py")
+    run("build_catalog.py", ["--llm"])
     run("smoke_tools.py")
     print("pipeline done")

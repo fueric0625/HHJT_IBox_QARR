@@ -39,6 +39,21 @@ def find_node(node_id: str | None) -> dict | None:
     return walk(catalog["nodes"])
 
 
+def find_parent(node_id: str) -> dict | None:
+    catalog = load_catalog()
+
+    def walk(nodes: list[dict], parent: dict | None) -> dict | None:
+        for n in nodes:
+            if n.get("id") == node_id or n.get("clause_id") == node_id:
+                return parent
+            hit = walk(n.get("children") or [], n)
+            if hit is not None:
+                return hit
+        return None
+
+    return walk(catalog["nodes"], None)
+
+
 def compact_node(n: dict, include_children: bool = False) -> dict:
     item = {
         "id": n.get("id"),

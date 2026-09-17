@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -9,7 +10,7 @@ import httpx
 
 from .config import KEEP_FULL_CLAUSES, LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, MAX_ROUNDS, MAX_TOOL_CALLS
 from .prompts import SYSTEM_PROMPT
-from .tools import OPENAI_TOOLS, TOOL_IMPL
+from .tools import CURRENT_QUERY, OPENAI_TOOLS, TOOL_IMPL, lookup_nav_hits, root_catalog_brief
 
 
 def _client() -> OpenAI:
@@ -162,6 +163,7 @@ def ask(question: str, history: list[dict] | None = None) -> dict[str, Any]:
                 "citations": [c for c in citations if c],
                 "rounds": data.get("rounds"),
                 "tool_calls": data.get("tool_calls"),
+                "elapsed_ms": data.get("elapsed_ms"),
             }
     return {"answer": "".join(tokens), "trace": trace, "citations": citations}
 
@@ -171,86 +173,128 @@ def _complete(client: OpenAI, messages: list[dict], use_tools: bool):
         "model": LLM_MODEL,
         "messages": messages,
         "temperature": 0.1,
+        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
     }
     if use_tools:
         kwargs["tools"] = OPENAI_TOOLS
         kwargs["tool_choice"] = "auto"
-    return client.chat.completions.create(**kwargs)
+    try:
+        return client.chat.completions.create(**kwargs)
+    except Exception:
+        kwargs.pop("extra_body", None)
+        return client.chat.completions.create(**kwargs)
+
+
+def _already_injected(history: list[dict] | None) -> bool:
+    if not history:
+        return False
+    blob = " ".join(str(m.get("content") or "") for m in history)
+    return "制度目录根层" in blob
 
 
 def ask_stream(question: str, history: list[dict] | None = None) -> Iterator[dict]:
     client = _client()
-    messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
-    if history:
-        messages.extend(history)
-    messages.append({"role": "user", "content": question})
+    started = time.perf_counter()
+    q_token = CURRENT_QUERY.set(question)
 
-    rounds = 0
-    tool_count = 0
-    force_answer = False
+    def elapsed_ms() -> int:
+        return int((time.perf_counter() - started) * 1000)
 
-    while True:
-        rounds += 1
-        if force_answer:
-            messages.append(
-                {
-                    "role": "user",
-                    "content": "已达到工具调用上限。请仅根据已经 read_clause 的原文作答；若证据不足，回答未找到并建议咨询综合部。不要再调用工具。",
-                }
+    try:
+        messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        if history:
+            messages.extend(history)
+        user_content = question
+        if not _already_injected(history):
+            user_content = (
+                f"{question}\n\n---\n制度目录根层（已注入，勿再 list_catalog 根目录）：\n{root_catalog_brief()}"
+                f"\n字面检索线索（不是原文，须并行 read_clause）：\n{lookup_nav_hits(question)}"
             )
-        ctx = _trim_messages(messages)
-        try:
-            resp = _complete(client, ctx, use_tools=not force_answer)
-        except Exception as e:
-            yield {"event": "error", "data": {"message": str(e)}}
-            return
-        msg = resp.choices[0].message
-        raw_calls = list(msg.tool_calls or [])
-        if raw_calls and not force_answer:
-            tool_calls_msg = []
-            fake = []
-            for i, tc in enumerate(raw_calls):
-                args_obj = _parse_args(tc.function.arguments)
-                args_s = json.dumps(args_obj, ensure_ascii=False)
-                cid = tc.id or f"call_{i}"
-                fake.append({"id": cid, "name": tc.function.name, "arguments": args_s})
-                tool_calls_msg.append(
-                    {
-                        "id": cid,
-                        "type": "function",
-                        "function": {"name": tc.function.name, "arguments": args_s},
-                    }
-                )
-                yield {"event": "tool_call", "data": {"name": tc.function.name, "arguments": args_obj}}
-            executed = _run_tools(fake)
-            messages.append({"role": "assistant", "content": "", "tool_calls": tool_calls_msg})
-            for item in executed:
-                tool_count += 1
+        messages.append({"role": "user", "content": user_content})
+
+        rounds = 0
+        tool_count = 0
+        force_answer = False
+
+        while True:
+            rounds += 1
+            if force_answer:
                 messages.append(
                     {
-                        "role": "tool",
-                        "tool_call_id": item["id"],
-                        "name": item["name"],
-                        "content": item["result"],
+                        "role": "user",
+                        "content": "已达到工具调用上限。请仅根据已经 read_clause 的原文作答；若证据不足，回答未找到并建议咨询综合部。不要再调用工具。",
                     }
                 )
-                yield {
-                    "event": "tool_result",
-                    "data": {
-                        "name": item["name"],
-                        "summary": item["summary"],
-                        "arguments": item["arguments"],
-                    },
-                }
-            if rounds >= MAX_ROUNDS or tool_count >= MAX_TOOL_CALLS:
-                force_answer = True
-            continue
+            ctx = _trim_messages(messages)
+            try:
+                resp = _complete(client, ctx, use_tools=not force_answer)
+            except Exception as e:
+                yield {"event": "error", "data": {"message": str(e), "elapsed_ms": elapsed_ms()}}
+                return
+            msg = resp.choices[0].message
+            raw_calls = list(msg.tool_calls or [])
+            if raw_calls and not force_answer:
+                tool_calls_msg = []
+                fake = []
+                for i, tc in enumerate(raw_calls):
+                    args_obj = _parse_args(tc.function.arguments)
+                    args_s = json.dumps(args_obj, ensure_ascii=False)
+                    cid = tc.id or f"call_{i}"
+                    fake.append({"id": cid, "name": tc.function.name, "arguments": args_s})
+                    tool_calls_msg.append(
+                        {
+                            "id": cid,
+                            "type": "function",
+                            "function": {"name": tc.function.name, "arguments": args_s},
+                        }
+                    )
+                    yield {
+                        "event": "tool_call",
+                        "data": {
+                            "name": tc.function.name,
+                            "arguments": args_obj,
+                            "round": rounds,
+                            "elapsed_ms": elapsed_ms(),
+                        },
+                    }
+                executed = _run_tools(fake)
+                messages.append({"role": "assistant", "content": "", "tool_calls": tool_calls_msg})
+                for item in executed:
+                    tool_count += 1
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": item["id"],
+                            "name": item["name"],
+                            "content": item["result"],
+                        }
+                    )
+                    yield {
+                        "event": "tool_result",
+                        "data": {
+                            "name": item["name"],
+                            "summary": item["summary"],
+                            "arguments": item["arguments"],
+                            "round": rounds,
+                            "elapsed_ms": elapsed_ms(),
+                        },
+                    }
+                if rounds >= MAX_ROUNDS or tool_count >= MAX_TOOL_CALLS:
+                    force_answer = True
+                continue
 
-        answer = msg.content or ""
-        for i in range(0, len(answer), 24):
-            yield {"event": "token", "data": {"text": answer[i : i + 24]}}
-        yield {
-            "event": "done",
-            "data": {"answer": answer, "rounds": rounds, "tool_calls": tool_count},
-        }
-        return
+            answer = msg.content or ""
+            for i in range(0, len(answer), 24):
+                yield {"event": "token", "data": {"text": answer[i : i + 24]}}
+            yield {
+                "event": "done",
+                "data": {
+                    "answer": answer,
+                    "rounds": rounds,
+                    "tool_calls": tool_count,
+                    "elapsed_ms": elapsed_ms(),
+                },
+            }
+            return
+    finally:
+        CURRENT_QUERY.reset(q_token)
