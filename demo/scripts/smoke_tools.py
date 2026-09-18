@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from backend.store import load_catalog, load_clauses  # noqa: E402
+from backend.route import catalog_outline, parse_route_text  # noqa: E402
 from backend.tools import (  # noqa: E402
     CURRENT_QUERY,
     list_catalog,
@@ -39,6 +40,21 @@ def main() -> None:
     assert brief.get("files"), brief
     assert any(f.get("id") == "3-1-13" for f in brief["files"]), brief["files"]
     print("root_catalog_brief files:", len(brief["files"]))
+
+    outline = catalog_outline()
+    ch_ids = [c["id"] for f in outline for c in f.get("chapters") or []]
+    assert any(f.get("id") == "3-1-13" for f in outline), outline
+    assert "3-1-13:第五章" in ch_ids, ch_ids
+    print("catalog_outline files:", len(outline), "chapters:", len(ch_ids))
+
+    parsed = parse_route_text(
+        '前文\n```json\n{"direction":"津贴","candidates":[{"id":"3-1-13:第五章","title":"第五章","why":"津贴表"}],"maybe_unanswerable":false}\n```'
+    )
+    assert parsed["direction"] == "津贴", parsed
+    assert parsed["candidates"][0]["id"] == "3-1-13:第五章", parsed
+    fake = parse_route_text('{"direction":"x","candidates":[{"id":"不存在:第九十九条"}]}')
+    assert fake["candidates"] == [], fake
+    print("parse_route_text ok")
 
     travel = json.loads(list_section("3-1-13"))
     print("3-1-13 chapters:", [c["title"] for c in travel["items"]])

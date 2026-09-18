@@ -36,6 +36,7 @@ header { display: flex; justify-content: space-between; align-items: center; pad
 .msg.bot { background: #1b242e; border: 1px solid var(--line); }
 .tools { font-size: 12px; color: var(--tool); margin-bottom: 8px; }
 .tools div { margin: 2px 0; }
+.tools .route { color: #7eb6ff; }
 .tools-meta { color: var(--muted); margin-bottom: 6px; }
 form { display: flex; gap: 8px; padding: 12px 20px 18px; border-top: 1px solid var(--line); }
 textarea { flex: 1; resize: none; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font: inherit; }

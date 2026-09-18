@@ -2,7 +2,7 @@
 
 用**分级目录 + 工具调用 + 渐进式披露**回答出差相关制度问题。本阶段没有向量库、没有 BM25。前后端用 **SSE**，不用 WebSocket。
 
-第一轮冻结见 [方案0-5步成果说明_v1.md](方案0-5步成果说明_v1.md)。第二轮（准确率/速度）见 [方案0-5步成果说明_v2.md](方案0-5步成果说明_v2.md)。第三轮（真流式 + 添加 PDF）见 [方案0-5步成果说明_v3.md](方案0-5步成果说明_v3.md)。
+第一轮冻结见 [方案0-5步成果说明_v1.md](方案0-5步成果说明_v1.md)。第二轮（准确率/速度）见 [方案0-5步成果说明_v2.md](方案0-5步成果说明_v2.md)。第三轮（真流式 + 添加 PDF）见 [方案0-5步成果说明_v3.md](方案0-5步成果说明_v3.md)。第四轮（目录路由后再调工具）见 [方案0-5步成果说明_v4.md](方案0-5步成果说明_v4.md)。
 
 ## 知识库
 
@@ -36,11 +36,11 @@ copy .env.example .env
 python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000
 ```
 
-浏览器打开 `http://127.0.0.1:8000`。聊天走 `POST /api/chat`（`text/event-stream`）：`round_start` / `tool_call` / `tool_result` / `answer_start` / `token` / `done` / `error`。最终作答轮一旦开始即推 `answer_start`，随后 `token` 为模型真增量（不再按 24 字切块）。
+浏览器打开 `http://127.0.0.1:8000`。聊天走 `POST /api/chat`（`text/event-stream`）：`route_start` / `route` / `round_start` / `tool_call` / `tool_result` / `answer_start` / `token` / `done` / `error`。问题先对照目录判断方向并圈章节，再调工具；最终作答轮一旦开始即推 `answer_start`，随后 `token` 为模型真增量（不再按 24 字切块）。
 
 侧栏可 **添加 PDF**：`POST /api/ingest`（multipart，SSE：`progress` / `done` / `error`）。抽取拆条后写回 `clauses.jsonl` / `catalog.json` 并热加载，不必重启 uvicorn。文件列表见 `GET /api/files`。
 
-方案第 0–5 步第一轮成果见 [方案0-5步成果说明_v1.md](方案0-5步成果说明_v1.md)，第二轮见 [方案0-5步成果说明_v2.md](方案0-5步成果说明_v2.md)，第三轮见 [方案0-5步成果说明_v3.md](方案0-5步成果说明_v3.md)。
+方案第 0–5 步第一轮成果见 [方案0-5步成果说明_v1.md](方案0-5步成果说明_v1.md)，第二轮见 [方案0-5步成果说明_v2.md](方案0-5步成果说明_v2.md)，第三轮见 [方案0-5步成果说明_v3.md](方案0-5步成果说明_v3.md)，第四轮见 [方案0-5步成果说明_v4.md](方案0-5步成果说明_v4.md)。
 
 ## 评测
 
@@ -63,4 +63,4 @@ python eval\run_eval.py
 - `read_clause` 读原文（作答前必须）
 - `lookup_keyword` 字面检索，纠偏用
 
-每次模型补全会丢掉旧的目录大段结果，只保留最近四次条款原文，避免撑满 32K。首轮会注入根目录和字面检索线索，不必再调用 `list_catalog` 根节点。
+每次模型补全会丢掉旧的目录大段结果，只保留最近四次条款原文，避免撑满 32K。提问后先做目录路由（方向 + 拟引用章节），再注入字面检索线索；不必再调用 `list_catalog` 根节点。

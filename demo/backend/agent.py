@@ -10,6 +10,7 @@ import httpx
 
 from .config import KEEP_FULL_CLAUSES, LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, MAX_ROUNDS, MAX_TOOL_CALLS
 from .prompts import system_prompt
+from .route import ROUTE_PROMPT, catalog_outline_text, format_route_block, parse_route_text
 from .tools import CURRENT_QUERY, OPENAI_TOOLS, TOOL_IMPL, lookup_nav_hits, root_catalog_brief
 
 
@@ -148,6 +149,8 @@ def ask(question: str, history: list[dict] | None = None) -> dict[str, Any]:
         data = event["data"]
         if et == "token":
             tokens.append(data.get("text", ""))
+        elif et == "route":
+            trace.append({"type": "route", **data})
         elif et == "tool_call":
             trace.append({"type": "call", **data})
         elif et == "tool_result":
@@ -168,17 +171,22 @@ def ask(question: str, history: list[dict] | None = None) -> dict[str, Any]:
     return {"answer": "".join(tokens), "trace": trace, "citations": citations}
 
 
-def _complete_stream(client: OpenAI, messages: list[dict], use_tools: bool):
+def _complete_kwargs(messages: list[dict], use_tools: bool, stream: bool, temperature: float) -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "model": LLM_MODEL,
         "messages": messages,
-        "temperature": 0.1,
-        "stream": True,
+        "temperature": temperature,
+        "stream": stream,
         "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
     }
     if use_tools:
         kwargs["tools"] = OPENAI_TOOLS
         kwargs["tool_choice"] = "auto"
+    return kwargs
+
+
+def _complete_stream(client: OpenAI, messages: list[dict], use_tools: bool):
+    kwargs = _complete_kwargs(messages, use_tools=use_tools, stream=True, temperature=0.1)
     try:
         return client.chat.completions.create(**kwargs)
     except Exception:
@@ -186,11 +194,37 @@ def _complete_stream(client: OpenAI, messages: list[dict], use_tools: bool):
         return client.chat.completions.create(**kwargs)
 
 
-def _already_injected(history: list[dict] | None) -> bool:
-    if not history:
-        return False
-    blob = " ".join(str(m.get("content") or "") for m in history)
-    return "制度目录根层" in blob
+def _complete_text(client: OpenAI, messages: list[dict]) -> str:
+    kwargs = _complete_kwargs(messages, use_tools=False, stream=False, temperature=0)
+    try:
+        resp = client.chat.completions.create(**kwargs)
+    except Exception:
+        kwargs.pop("extra_body", None)
+        resp = client.chat.completions.create(**kwargs)
+    choice = resp.choices[0].message if resp.choices else None
+    return (choice.content or "").strip() if choice else ""
+
+
+def _plan_question(client: OpenAI, question: str) -> dict[str, Any]:
+    messages = [
+        {
+            "role": "system",
+            "content": ROUTE_PROMPT.replace("{CATALOG}", catalog_outline_text()),
+        },
+        {"role": "user", "content": question},
+    ]
+    try:
+        raw = _complete_text(client, messages)
+    except Exception:
+        raw = ""
+    plan = parse_route_text(raw)
+    if not plan.get("candidates"):
+        plan = {
+            **plan,
+            "direction": plan.get("direction") or "目录预判失败，改用根目录与字面检索",
+            "candidates": [],
+        }
+    return plan
 
 
 def ask_stream(question: str, history: list[dict] | None = None) -> Iterator[dict]:
@@ -205,12 +239,36 @@ def ask_stream(question: str, history: list[dict] | None = None) -> Iterator[dic
         messages: list[dict] = [{"role": "system", "content": system_prompt()}]
         if history:
             messages.extend(history)
-        user_content = question
-        if not _already_injected(history):
-            user_content = (
-                f"{question}\n\n---\n制度目录根层（已注入，勿再 list_catalog 根目录）：\n{root_catalog_brief()}"
-                f"\n字面检索线索（不是原文，须并行 read_clause）：\n{lookup_nav_hits(question)}"
+        yield {"event": "route_start", "data": {"elapsed_ms": elapsed_ms()}}
+        try:
+            plan = _plan_question(client, question)
+        except Exception as e:
+            plan = {
+                "direction": "路由失败，改用根目录与字面检索",
+                "reason": str(e),
+                "candidates": [],
+                "maybe_unanswerable": False,
+            }
+        yield {
+            "event": "route",
+            "data": {
+                "direction": plan.get("direction"),
+                "reason": plan.get("reason"),
+                "candidates": plan.get("candidates") or [],
+                "maybe_unanswerable": bool(plan.get("maybe_unanswerable")),
+                "elapsed_ms": elapsed_ms(),
+            },
+        }
+
+        extras = [format_route_block(plan)]
+        if plan.get("candidates"):
+            extras.append("勿再 list_catalog 根目录。")
+        else:
+            extras.append(
+                "制度目录根层（路由未锁定章节，勿再 list_catalog 根目录）：\n" + root_catalog_brief()
             )
+        extras.append("字面检索线索（不是原文，须并行 read_clause）：\n" + lookup_nav_hits(question))
+        user_content = question + "\n\n---\n" + "\n".join(extras)
         messages.append({"role": "user", "content": user_content})
 
         rounds = 0

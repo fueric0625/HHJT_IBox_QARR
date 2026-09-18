@@ -157,7 +157,23 @@ form.addEventListener("submit", async (e) => {
     await readSse(res, (eventName, data) => {
       const elapsedLabel = data.elapsed_ms != null ? fmtSec(data.elapsed_ms) : fmtSec(performance.now() - t0);
       if (data.round) lastRound = data.round;
-      if (eventName === "round_start") {
+      if (eventName === "route_start") {
+        setStatus("判断问题方向");
+        const row = document.createElement("div");
+        row.className = "route";
+        row.textContent = `${elapsedLabel} 正在根据目录判断问题方向与拟引用章节…`;
+        tools.appendChild(row);
+      } else if (eventName === "route") {
+        const row = document.createElement("div");
+        row.className = "route";
+        const cands = (data.candidates || [])
+          .map((c) => `${c.id} ${c.title || ""}`.trim())
+          .join("；");
+        const unans = data.maybe_unanswerable ? "（目录可能无专门规定）" : "";
+        row.textContent = `${elapsedLabel} 方向：${data.direction || "未判定"}${unans}${cands ? `。拟引用：${cands}` : ""}`;
+        tools.appendChild(row);
+        setStatus("已圈定章节");
+      } else if (eventName === "round_start") {
         lastRound = data.round || lastRound;
         setStatus(data.force_answer ? "作答中" : `第${lastRound}轮`);
       } else if (eventName === "answer_start") {
