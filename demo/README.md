@@ -54,7 +54,7 @@ python eval\run_eval.py
 
 产出 `eval/eval_report.md` 与 `eval/eval_results.json`。
 
-本轮 17 条自动判定见 [eval/eval_report.md](eval/eval_report.md)。第二轮快照（2026-09-17T16:27）：`likely_ok` 10、`unanswerable_ok` 1、`partial` 6、`miss_clause` 0；中位轮次 2.0。对照第一轮与目标条款见 [方案0-5步成果说明_v2.md](方案0-5步成果说明_v2.md)。天花板通读结论见 [eval/ceiling_report.md](eval/ceiling_report.md)。
+17 题评测与上一轮分开存放：第二轮 [eval/eval_report_v2.md](eval/eval_report_v2.md)；第四轮（目录路由）[eval/eval_report_v4.md](eval/eval_report_v4.md)。对照见 [方案0-5步成果说明_v4.md](方案0-5步成果说明_v4.md)。重跑不覆盖第二轮：`python eval\run_eval.py --tag v4`。天花板通读结论见 [eval/ceiling_report.md](eval/ceiling_report.md)。
 
 ## 工具
 

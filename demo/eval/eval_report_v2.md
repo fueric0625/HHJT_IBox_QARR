@@ -1,8 +1,5 @@
 # 出差制度智能体 DEMO 评测对照
 
-> 第二轮快照（2026-09-17T16:27）。同内容另存 [`eval_report_v2.md`](eval_report_v2.md)。第四轮（先目录路由再调工具）见 [`eval_report_v4.md`](eval_report_v4.md)，对照见 [`../方案0-5步成果说明_v4.md`](../方案0-5步成果说明_v4.md)。
-
-
 - 时间：2026-09-17T16:27:04
 - 用例数：17
 - 自动判定分布：{'unanswerable_ok': 1, 'partial': 6, 'likely_ok': 10}
